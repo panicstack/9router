@@ -6,19 +6,21 @@ ARG ALPINE_MIRROR=dl-cdn.alpinelinux.org
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 ARG APP_VERSION=unknown
 
+# --------------------------------------------------
+# Base image
+# --------------------------------------------------
 FROM ${NODE_IMAGE} AS base
 
 ARG ALPINE_MIRROR
 
 WORKDIR /app
 
-# Configure the Alpine package mirror.
 RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
       sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
     fi
 
 # --------------------------------------------------
-# Builder
+# Build stage
 # --------------------------------------------------
 FROM base AS builder
 
@@ -44,7 +46,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # --------------------------------------------------
-# Production runner
+# Production runtime
 # --------------------------------------------------
 FROM ${NODE_IMAGE} AS runner
 
@@ -53,7 +55,6 @@ ARG APP_VERSION
 
 WORKDIR /app
 
-# Configure the Alpine package mirror.
 RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
       sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
     fi
@@ -61,43 +62,45 @@ RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
 LABEL org.opencontainers.image.title="9router" \
       org.opencontainers.image.version="${APP_VERSION}"
 
-# Application configuration.
 ENV NODE_ENV=production \
     PORT=20128 \
     HOSTNAME=0.0.0.0 \
     NEXT_TELEMETRY_DISABLED=1 \
-    DATA_DIR=/app/data \
-    TZ=Asia/Omsk \
-    HOME=/app/data-home
+    DATA_DIR=/tmp/9router-data \
+    HOME=/tmp/9router-home \
+    TZ=Asia/Dhaka
 
-# Runtime dependencies and timezone database.
+# Runtime dependencies and timezone.
 RUN apk add --no-cache ffmpeg tzdata && \
     ln -snf /usr/share/zoneinfo/Asia/Dhaka /etc/localtime && \
-    echo "Asia/Omsk" > /etc/timezone
+    echo "Asia/Dhaka" > /etc/timezone
 
-# Copy the standalone Next.js application.
+# Next.js standalone output.
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/custom-server.js ./custom-server.js
 
-# Additional runtime files.
+# Additional application files.
 COPY --from=builder /app/open-sse ./open-sse
 COPY --from=builder /app/src/mitm ./src/mitm
 
-# Dependencies required by runtime-loaded modules and child processes.
+# Runtime dependencies that may be omitted by Next.js tracing.
 COPY --from=builder /app/node_modules/node-forge ./node_modules/node-forge
 COPY --from=builder /app/node_modules/next ./node_modules/next
 COPY --from=builder /app/node_modules/sql.js ./node_modules/sql.js
 COPY --from=builder /app/node_modules/node-machine-id ./node_modules/node-machine-id
 
-# Prepare writable application directories.
-# No chown or su-exec is required at startup.
-RUN mkdir -p /app/data /app/data-home && \
-    chmod 0777 /app/data /app/data-home && \
-    ln -sfn /app/data-home /root/.9router
+# Redirect data paths to temporary writable storage.
+# Remove the image-layer directory before creating the symlink.
+RUN mkdir -p /tmp/9router-data /tmp/9router-home && \
+    chmod 0777 /tmp/9router-data /tmp/9router-home && \
+    rm -rf /app/data && \
+    ln -s /tmp/9router-data /app/data && \
+    ln -sfn /tmp/9router-data /tmp/9router-home/.9router && \
+    ln -sfn /tmp/9router-home /root/.9router
 
 EXPOSE 20128
 
-# Run directly without switching users or changing supplementary groups.
+# Run directly; do not attempt to change users or supplementary groups.
 CMD ["node", "custom-server.js"]
