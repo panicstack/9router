@@ -72,13 +72,12 @@ RUN mkdir -p /app/data && chown -R node:node /app && \
   mkdir -p /app/data-home && chown node:node /app/data-home && \
   ln -sf /app/data-home /root/.9router 2>/dev/null || true
 
-# Avoid a full distribution upgrade in the runtime image. It makes builds less
-# reproducible and is unrelated to installing the runtime entrypoint helper.
-RUN apk add --no-cache su-exec ffmpeg && \
-  printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
-  chmod +x /entrypoint.sh
+
+RUN apk add --no-cache ffmpeg && \
+    mkdir -p /app/data /app/data-home && \
+    chmod 0777 /app/data /app/data-home && \
+    ln -sfn /app/data-home /root/.9router
 
 EXPOSE 20128
 
-ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "custom-server.js"]
